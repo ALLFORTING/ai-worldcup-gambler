@@ -66,8 +66,8 @@ GROUP_PAIRINGS = [
 
 KNOCKOUT_INFO = {
     12: ("qf", "8强赛", "八强开门，输的人可以提前研究机票。"),
-    13: ("four", "4强赛", "离奖杯越近，离天台也可能越近。"),
-    14: ("semi", "半决赛", "这里是排位半决赛，不影响冠军，但很影响嘴硬。"),
+    13: ("four", "半决赛", "离奖杯越近，离天台也可能越近。"),
+    14: ("placement", "5-8名排位赛", "八强输家也要继续踢，毕竟机票不能改签太早。"),
     15: ("third", "三四名决赛", "铜牌也是牌，别笑，至少人家没梭哈输光。"),
     16: ("final", "决赛", "最后一场。庄家已经把香槟冰好了。"),
 }
@@ -228,6 +228,8 @@ def cmd(command_string: str) -> str:
             return text
         if command == "history":
             return _cmd_history(state)
+        if command == "summary":
+            return _cmd_summary(state)
         if command == "titles":
             return _cmd_titles(state)
         if command == "news":
@@ -510,6 +512,7 @@ def _cmd_next(state: Dict[str, Any]) -> str:
     matches = state["current_matches"]
     cash_before = state["cash"]
     debt_before = state["debt"]
+    titles_before = set(state["permanent_titles"])
     lines = [f"⏭️ 推进第 {round_index + 1} 轮 · {_round_name(state)}", ""]
     results_by_id = {}
 
@@ -568,6 +571,15 @@ def _cmd_next(state: Dict[str, Any]) -> str:
         lines.append("")
         lines.append(f"下一轮：{_round_name(state)}。输入 schedule 继续下注，输入 news 继续被传闻带节奏。")
 
+    new_titles = [title for title in state["permanent_titles"] if title not in titles_before]
+    if new_titles:
+        lines.append("")
+        for title in new_titles:
+            lines.append(f"🏷️ 新称号解锁：{TITLE_NAMES.get(title, title)}")
+            taunt = TITLE_TAUNTS.get(title)
+            if taunt:
+                lines.append(f"嘲讽语：{taunt}")
+
     mood = _mood_text(state, cash_before, debt_before, round_profit)
     lines.append("")
     lines.append(mood)
@@ -593,6 +605,35 @@ def _cmd_history(state: Dict[str, Any]) -> str:
             f"金额 {bet['amount']:,} | 赔率 {bet['odds']:.2f} | {result} | 盈亏 {money}"
         )
     return "\n".join(lines)
+
+
+def _cmd_summary(state: Dict[str, Any]) -> str:
+    settled = [bet for bet in state["bets"] if bet["settled"]]
+    wins = sum(1 for bet in settled if bet["won"])
+    losses = len(settled) - wins
+    win_rate = (wins / len(settled) * 100) if settled else 0.0
+    total_staked = sum(bet["amount"] for bet in state["bets"])
+    total_returned = sum(bet.get("payout", 0) for bet in settled)
+    titles = [TITLE_NAMES.get(title, title) for title in state.get("permanent_titles", [])]
+    return "\n".join(
+        [
+            "📈 完整统计摘要",
+            f"总下注次数：{len(state['bets'])}",
+            f"已结算下注：{len(settled)}",
+            f"胜：{wins}",
+            f"负：{losses}",
+            f"胜率：{win_rate:.1f}%",
+            f"总投入：{total_staked:,}",
+            f"总返还：{total_returned:,}",
+            f"累计盈亏：{state['total_profit']:+,}",
+            f"最大单笔盈利：{state['max_single_win']:+,}",
+            f"最大单笔亏损：{state['max_single_loss']:+,}",
+            f"最终/当前现金：{state['cash']:,}",
+            f"债务：{state['debt']:,}",
+            f"净资产：{_net_assets(state):,}",
+            "已获永久称号：" + ("、".join(titles) if titles else "暂无"),
+        ]
+    )
 
 
 def _cmd_titles(state: Dict[str, Any]) -> str:
@@ -718,6 +759,7 @@ bet pk <match> <yes/no> <amt>           猜点球大战，仅淘汰赛
 parlay <1,2,3> <home,away,home> <amt>   串关，全中才赢
 next                                    推进一轮并结算
 history                                 最近 20 条下注记录
+summary                                 完整统计摘要
 titles                                  查看称号
 loan                                    现金 <= 0 时借 50000 高利贷
 repay <amount>                          还款
@@ -868,8 +910,8 @@ def _create_knockout_bracket(state: Dict[str, Any]) -> None:
         "qf_losers": [],
         "four_winners": [],
         "four_losers": [],
-        "semi_winners": [],
-        "semi_losers": [],
+        "placement_winners": [],
+        "placement_losers": [],
         "champion": None,
         "runner_up": None,
         "third": None,
@@ -885,7 +927,7 @@ def _make_knockout_round(state: Dict[str, Any], rng: RNG, round_index: int) -> L
     elif stage == "four":
         winners = bracket["qf_winners"]
         pairs = [(winners[0], winners[3]), (winners[1], winners[2])] if len(winners) >= 4 else []
-    elif stage == "semi":
+    elif stage == "placement":
         losers = bracket["qf_losers"]
         pairs = [(losers[0], losers[3]), (losers[1], losers[2])] if len(losers) >= 4 else []
     elif stage == "third":
@@ -1133,9 +1175,9 @@ def _apply_knockout_result(state: Dict[str, Any], match: Dict[str, Any]) -> None
     elif match["stage"] == "four":
         bracket["four_winners"].append(winner)
         bracket["four_losers"].append(loser)
-    elif match["stage"] == "semi":
-        bracket["semi_winners"].append(winner)
-        bracket["semi_losers"].append(loser)
+    elif match["stage"] == "placement":
+        bracket["placement_winners"].append(winner)
+        bracket["placement_losers"].append(loser)
     elif match["stage"] == "third":
         bracket["third"] = winner
         bracket["fourth"] = loser
@@ -1308,16 +1350,24 @@ def _generate_news(state: Dict[str, Any], rng: RNG) -> List[str]:
         return []
     count = rng.randint(1, 3)
     items = []
+    seen = set()
     categories = list(NEWS.keys())
-    for _ in range(count):
+    attempts = 0
+    max_attempts = count * 8
+    while len(items) < count and attempts < max_attempts:
+        attempts += 1
         match = rng.choice(matches)
         team_id = rng.choice([match["home"], match["away"]])
         category = rng.choice(categories)
         icon, template = rng.choice(NEWS[category])
         if category == "match_event":
-            items.append(f"{icon} {_team_name(match['home'])} vs {_team_name(match['away'])}：{template}")
+            item = f"{icon} {_team_name(match['home'])} vs {_team_name(match['away'])}：{template}"
         else:
-            items.append(f"{icon} " + template.format(team=_team_name(team_id)))
+            item = f"{icon} " + template.format(team=_team_name(team_id))
+        if item in seen:
+            continue
+        seen.add(item)
+        items.append(item)
     return items
 
 

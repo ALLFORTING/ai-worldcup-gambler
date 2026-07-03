@@ -2,6 +2,16 @@ import re
 import sys
 from pathlib import Path
 
+
+def configure_utf8_output():
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
+configure_utf8_output()
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import gambler
@@ -48,6 +58,7 @@ def main():
 
     assert_good("status", gambler.cmd("status"))
     assert_good("standings", gambler.cmd("standings"))
+    assert_good("summary", gambler.cmd("summary"))
     assert_good("quit", gambler.cmd("quit"))
     print("Full run test passed.")
 

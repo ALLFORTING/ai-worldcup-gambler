@@ -23,8 +23,8 @@
 - 自定义 mulberry32 PRNG，支持确定性随机：同 seed + 同操作 = 同结果。
 - 新闻/传闻系统：影响玩家认知，但不直接改变比赛结果。
 - 高利贷系统：现金归零后可借 50000，每轮 10% 复利。
-- 称号系统：动态资产称号和永久行为称号。
-- 下注历史、盈亏追踪、胜率统计。
+- 称号系统：动态资产称号和永久行为称号，结算时会提示新解锁称号。
+- 下注历史、完整统计摘要、盈亏追踪、胜率统计。
 - JSON 存档/读档，自动生成 `gambler_save.json`。
 - 纯标准库实现，不需要安装第三方依赖。
 
@@ -38,10 +38,12 @@ ai-worldcup-gambler/
 ├── .gitignore
 ├── examples/
 │   ├── demo.py
-│   └── full_demo.py
+│   ├── full_demo.py
+│   └── loan_demo.py
 ├── tests/
 │   ├── smoke_test.py
-│   └── full_run_test.py
+│   ├── full_run_test.py
+│   └── loan_test.py
 └── .github/
     └── workflows/
         └── smoke-test.yml
@@ -58,6 +60,7 @@ git clone https://github.com/ALLFORTING/ai-worldcup-gambler.git
 cd ai-worldcup-gambler
 python examples/demo.py
 python examples/full_demo.py
+python examples/loan_demo.py
 ```
 
 运行项目不需要安装第三方依赖，只使用 Python 标准库。
@@ -73,7 +76,7 @@ print(gambler.cmd("schedule"))
 print(gambler.cmd("news"))
 print(gambler.cmd("bet wnl 1 home 5000"))
 print(gambler.cmd("next"))
-print(gambler.cmd("status"))
+print(gambler.cmd("summary"))
 ```
 
 ## 完整演示
@@ -82,9 +85,12 @@ print(gambler.cmd("status"))
 
 ```bash
 python examples/full_demo.py
+python examples/loan_demo.py
 ```
 
-它会用固定 seed 自动跑完整 17 轮，展示完整世界杯流程、自动下注、结算、最终状态、称号和历史。这个脚本不追求聪明，只负责把游戏从开幕吹到决赛，顺便让庄家露出职业微笑。
+`full_demo.py` 会用固定 seed 自动跑完整 17 轮，展示完整世界杯流程、自动下注、结算、最终状态、称号、历史和完整统计摘要。
+
+`loan_demo.py` 会故意把现金推到 0，展示高利贷到账、每轮 10% 复利、还款和退出流程。它是虚拟演示，不是现实建议。
 
 ## 测试
 
@@ -93,9 +99,25 @@ python examples/full_demo.py
 ```bash
 python tests/smoke_test.py
 python tests/full_run_test.py
+python tests/loan_test.py
 ```
 
-GitHub Actions 会在 push 和 pull request 时自动运行 smoke test、full run test 和 demo。
+GitHub Actions 会在 push 和 pull request 时自动运行 smoke test、full run test、loan test 和 demo。
+
+## Windows 编码说明
+
+示例脚本会主动把 stdout/stderr 配置为 UTF-8，通常可以直接重定向输出：
+
+```bash
+python examples/full_demo.py > full_demo_output.txt
+```
+
+如果你的终端仍然遇到编码问题，可以在 PowerShell 中手动设置：
+
+```powershell
+$env:PYTHONIOENCODING="utf-8"
+python examples/full_demo.py > full_demo_output.txt
+```
 
 ## 命令列表
 
@@ -112,6 +134,7 @@ bet pk 1 yes 1000
 parlay 1,2,3 home,away,home 3000
 next
 history
+summary
 titles
 loan
 repay 10000
@@ -152,7 +175,13 @@ merican / Merican 71
 
 小组赛每组单循环，共 24 场。每轮 2 场比赛，共 12 轮。胜 3 分、平 1 分、负 0 分。排名规则为积分、净胜球、进球数、球队 power 和稳定 tie-breaker。
 
-淘汰赛共 5 轮 10 场：8 强赛、4 强赛、半决赛、三四名决赛、决赛。90 分钟可以打平，但淘汰赛必须通过加时或点球产生胜者。
+淘汰赛共 5 轮 10 场：
+
+- 冠军路径：8强赛 4 场 -> 半决赛 2 场 -> 决赛 1 场。
+- 排位路径：8强输家进入 5-8 名排位赛 2 场。
+- 半决赛输家进入三四名决赛 1 场。
+
+90 分钟可以打平，但淘汰赛必须通过加时或点球产生胜者。
 
 ## 下注玩法
 
@@ -200,7 +229,7 @@ parlay 1,2,3 home,away,home 3000
 
 游戏会自动在项目目录生成 `gambler_save.json`。每次新开局、下注、推进轮次、借款、还款或退出都会写入存档。存档包含 PRNG 状态，因此读档后继续操作仍保持确定性。
 
-`.gitignore` 已忽略 `gambler_save.json`，不要把它提交到 GitHub。
+`.gitignore` 已忽略 `gambler_save.json` 和 `*_output.txt`，不要把运行存档或 demo 输出提交到 GitHub。
 
 ## 示例输出
 

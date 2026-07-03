@@ -23,8 +23,14 @@ jobs:
       - name: Run full tournament test
         run: python tests/full_run_test.py
 
+      - name: Run loan test
+        run: python tests/loan_test.py
+
       - name: Run short demo
         run: python examples/demo.py
 
       - name: Run full demo
         run: python examples/full_demo.py
+
+      - name: Run loan demo
+        run: python examples/loan_demo.py
