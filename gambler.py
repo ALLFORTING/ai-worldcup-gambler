@@ -50,7 +50,7 @@ TEAMS: List[Dict[str, Any]] = [
     {"id": "kroatia", "name": "Kroatia", "power": 79, "tier": 3},
     {"id": "uruguayo", "name": "Uruguayo", "power": 78, "tier": 3},
     {"id": "italio", "name": "Italio", "power": 77, "tier": 3},
-    {"id": "japon", "name": "Japon", "power": 74, "tier": 4},
+    {"id": "japon", "name": "Japón", "power": 74, "tier": 4},
     {"id": "koreo", "name": "Koreo", "power": 73, "tier": 4},
     {"id": "mexica", "name": "Mexica", "power": 72, "tier": 4},
     {"id": "merican", "name": "Merican", "power": 71, "tier": 4},

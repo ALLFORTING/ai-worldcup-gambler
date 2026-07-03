@@ -36,8 +36,15 @@ ai-worldcup-gambler/
 ├── README.md
 ├── LICENSE
 ├── .gitignore
-└── examples/
-    └── demo.py
+├── examples/
+│   ├── demo.py
+│   └── full_demo.py
+├── tests/
+│   ├── smoke_test.py
+│   └── full_run_test.py
+└── .github/
+    └── workflows/
+        └── smoke-test.yml
 ```
 
 `gambler.py` 是核心文件，所有游戏逻辑都集中在这个文件里。`gambler_save.json` 是运行时自动生成的存档文件，不应提交到 GitHub。
@@ -50,6 +57,7 @@ ai-worldcup-gambler/
 git clone https://github.com/ALLFORTING/ai-worldcup-gambler.git
 cd ai-worldcup-gambler
 python examples/demo.py
+python examples/full_demo.py
 ```
 
 运行项目不需要安装第三方依赖，只使用 Python 标准库。
@@ -67,6 +75,27 @@ print(gambler.cmd("bet wnl 1 home 5000"))
 print(gambler.cmd("next"))
 print(gambler.cmd("status"))
 ```
+
+## 完整演示
+
+运行：
+
+```bash
+python examples/full_demo.py
+```
+
+它会用固定 seed 自动跑完整 17 轮，展示完整世界杯流程、自动下注、结算、最终状态、称号和历史。这个脚本不追求聪明，只负责把游戏从开幕吹到决赛，顺便让庄家露出职业微笑。
+
+## 测试
+
+本项目不依赖第三方测试框架，可以直接运行：
+
+```bash
+python tests/smoke_test.py
+python tests/full_run_test.py
+```
+
+GitHub Actions 会在 push 和 pull request 时自动运行 smoke test、full run test 和 demo。
 
 ## 命令列表
 
@@ -101,22 +130,22 @@ new_game 12345
 16 支球队分为 4 档：
 
 ```text
-brazilia 92
-argentino 90
-franch 89
-germeny 87
-espanya 85
-englund 84
-portugalo 83
-belgica 82
-nederlund 80
-kroatia 79
-uruguayo 78
-italio 77
-japon 74
-koreo 73
-mexica 72
-merican 71
+brazilia / Brazilia 92
+argentino / Argentino 90
+franch / Franch 89
+germeny / Germeny 87
+espanya / Espanya 85
+englund / Englund 84
+portugalo / Portugalo 83
+belgica / Belgica 82
+nederlund / Nederlund 80
+kroatia / Kroatia 79
+uruguayo / Uruguayo 78
+italio / Italio 77
+japon / Japón 74
+koreo / Koreo 73
+mexica / Mexica 72
+merican / Merican 71
 ```
 
 分组为 A/B/C/D 四组，每组 4 队，每组包含不同档位球队。分组受 seed 控制，可复现。
