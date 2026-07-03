@@ -105,6 +105,15 @@ TITLE_TAUNTS = {
     "champion_predict": "冠军都猜中了，你确定不是庄家实习生？",
 }
 
+BET_CONFIRMATIONS = [
+    "庄家翻开账本，给你留了个微笑。",
+    "下注已存档。理性在门口等你，暂时没进来。",
+    "票据打印完成，命运开始装作很忙。",
+    "市场接单成功。你听见余额轻轻叹气。",
+    "下注确认。接下来请把玄学说得更坚定一点。",
+    "庄家收单，空气里有一点不祥的礼貌。",
+]
+
 NEWS = {
     "positive": [
         ("⚽", "{team} 主力前锋伤愈复出，球队士气大振。"),
@@ -298,8 +307,8 @@ def _cmd_status(state: Dict[str, Any]) -> str:
         f"最大单笔亏损：{state['max_single_loss']:+,}",
         f"游戏结束：{ended}",
     ]
-    if state["cash"] <= 0 and not state.get("ended"):
-        lines.append("余额见底。现在可以 loan 借高利贷，或 quit 体面退场。")
+    if state["cash"] < MIN_BET and not state.get("ended"):
+        lines.append("余额低于最低下注。现在可以 loan 借高利贷，或 quit 体面退场。")
     return "\n".join(lines)
 
 
@@ -583,8 +592,8 @@ def _cmd_next(state: Dict[str, Any]) -> str:
     mood = _mood_text(state, cash_before, debt_before, round_profit)
     lines.append("")
     lines.append(mood)
-    if state["cash"] <= 0 and not state.get("ended"):
-        lines.append("现金已经归零。你可以 loan，也可以 quit。一个伤钱包，一个伤自尊。")
+    if state["cash"] < MIN_BET and not state.get("ended"):
+        lines.append("现金低于最低下注。你可以 loan，也可以 quit。一个伤钱包，一个伤自尊。")
     return "\n".join(lines)
 
 
@@ -672,8 +681,8 @@ def _cmd_news(state: Dict[str, Any]) -> str:
 def _cmd_loan(state: Dict[str, Any]) -> str:
     if state.get("ended"):
         return "游戏已经结束。高利贷也要讲基本流程。"
-    if state["cash"] > 0:
-        return f"你还有现金 {state['cash']:,}，暂时不能借高利贷。先亏完再说，别急。"
+    if state["cash"] >= MIN_BET:
+        return f"你还有现金 {state['cash']:,}，暂时不能借高利贷。先亏到低于最低下注再说，别急。"
     state["cash"] += LOAN_AMOUNT
     state["debt"] += LOAN_AMOUNT
     state["loan_taken"] = True
@@ -761,7 +770,7 @@ next                                    推进一轮并结算
 history                                 最近 20 条下注记录
 summary                                 完整统计摘要
 titles                                  查看称号
-loan                                    现金 <= 0 时借 50000 高利贷
+loan                                    现金 < 100 时借 50000 高利贷
 repay <amount>                          还款
 quit                                    结束游戏
 
@@ -1019,9 +1028,9 @@ def _expected_goals(home: str, away: str) -> Tuple[float, float]:
     hp = TEAM_BY_ID[home]["power"]
     ap = TEAM_BY_ID[away]["power"]
     diff = (hp - ap) / 10
-    home_lambda = 1.35 + (hp - 75) / 45 + max(diff, 0) * 0.30 + 0.12
-    away_lambda = 1.20 + (ap - 75) / 45 + max(-diff, 0) * 0.30
-    return (_clamp(home_lambda, 0.45, 2.70), _clamp(away_lambda, 0.45, 2.55))
+    home_lambda = 1.05 + (hp - 75) / 100 + max(diff, 0) * 0.10 + 0.08
+    away_lambda = 0.95 + (ap - 75) / 105 + max(-diff, 0) * 0.10
+    return (_clamp(home_lambda, 0.35, 2.05), _clamp(away_lambda, 0.30, 1.95))
 
 
 def _score_probability(match: Dict[str, Any], home_goals: int, away_goals: int) -> float:
@@ -1122,7 +1131,31 @@ def _generate_score(match: Dict[str, Any], rng: RNG, wnl: str) -> Tuple[int, int
     else:
         if away_goals <= home_goals:
             away_goals = home_goals + 1 + rng.randint(0, 1)
-    return min(home_goals, 7), min(away_goals, 7)
+    return _tame_score(home_goals, away_goals, wnl)
+
+
+def _tame_score(home_goals: int, away_goals: int, wnl: str) -> Tuple[int, int]:
+    """Keep football scores plausible while preserving the simulated result."""
+    if wnl == "draw":
+        goals = min(home_goals, 3)
+        return goals, goals
+
+    while home_goals + away_goals > 6:
+        if wnl == "home":
+            if home_goals > away_goals + 1:
+                home_goals -= 1
+            elif away_goals > 0:
+                away_goals -= 1
+            else:
+                break
+        else:
+            if away_goals > home_goals + 1:
+                away_goals -= 1
+            elif home_goals > 0:
+                home_goals -= 1
+            else:
+                break
+    return home_goals, away_goals
 
 
 def _winner_by_power(match: Dict[str, Any], rng: RNG) -> str:
@@ -1244,7 +1277,30 @@ def _settle_round_bets(
             f"{outcome} #{bet['id']} {bet['kind']} | {bet['description']} | "
             f"赔率 {bet['odds']:.2f} | 盈亏 {profit:+,}"
         )
+    _refresh_streak_titles_from_history(state)
     return lines, round_profit
+
+
+def _refresh_streak_titles_from_history(state: Dict[str, Any]) -> None:
+    max_wins = 0
+    max_losses = 0
+    current_wins = 0
+    current_losses = 0
+    for bet in sorted((bet for bet in state["bets"] if bet["settled"]), key=lambda item: item["id"]):
+        if bet["kind"] == "pk":
+            continue
+        if bet["won"]:
+            current_wins += 1
+            current_losses = 0
+        else:
+            current_losses += 1
+            current_wins = 0
+        max_wins = max(max_wins, current_wins)
+        max_losses = max(max_losses, current_losses)
+    if max_wins >= 3:
+        _add_title(state, "paul")
+    if max_losses >= 5:
+        _add_title(state, "reverse")
 
 
 def _evaluate_bet(bet: Dict[str, Any], results_by_id: Dict[int, Dict[str, Any]]) -> bool:
@@ -1311,7 +1367,7 @@ def _place_bet(
         f"下注成功 #{bet['id']}：{kind} | {description}\n"
         f"金额 {amount:,}，赔率 {odds:.2f}。\n"
         f"剩余现金：{state['cash']:,}\n"
-        f"下注已存档。庄家已经开始微笑。"
+        f"{_bet_confirmation(state, bet['id'])}"
     )
 
 
@@ -1320,6 +1376,11 @@ def _after_bet_placed(state: Dict[str, Any], amount: int) -> None:
         _add_title(state, "chaser")
     state["last_bet_amount"] = amount
     _refresh_dynamic_titles(state)
+
+
+def _bet_confirmation(state: Dict[str, Any], bet_id: int) -> str:
+    index = (int(state.get("seed", 0)) + bet_id * 7 + int(state.get("rng_state", 0))) % len(BET_CONFIRMATIONS)
+    return BET_CONFIRMATIONS[index]
 
 
 def _update_round_titles(state: Dict[str, Any], round_index: int) -> None:
@@ -1348,7 +1409,7 @@ def _generate_news(state: Dict[str, Any], rng: RNG) -> List[str]:
     matches = state.get("current_matches", [])
     if not matches:
         return []
-    count = rng.randint(1, 3)
+    count = rng.randint(2, 3)
     items = []
     seen = set()
     categories = list(NEWS.keys())

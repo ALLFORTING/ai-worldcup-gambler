@@ -37,7 +37,9 @@ def main():
     cash = cash_from_status(status)
     assert cash > 0, "new game should start with cash"
 
-    assert_good(f"bet wnl 1 away {cash}", gambler.cmd(f"bet wnl 1 away {cash}"))
+    edge_bet = cash - 50
+    assert edge_bet >= 100, "edge bet should leave cash below minimum bet"
+    assert_good(f"bet wnl 1 away {edge_bet}", gambler.cmd(f"bet wnl 1 away {edge_bet}"))
     loan_output = gambler.cmd("loan")
     assert_good("loan", loan_output)
     assert "高利贷到账" in loan_output, loan_output
