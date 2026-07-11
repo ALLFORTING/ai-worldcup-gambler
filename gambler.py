@@ -672,7 +672,7 @@ def _cmd_news(state: Dict[str, Any]) -> str:
         return "当前没有新闻。没有消息也是消息，但通常没什么用。"
     lines = [
         f"📰 第 {state['round_index'] + 1} 轮新闻/传闻",
-        "提示：新闻只影响你的认知，不直接改变真实比赛结果。也就是说，亏了别怪记者。",
+        "提示：新闻真假混杂，赔率不会告诉你哪条有料。亏了可以怪记者，但记者不会赔。",
     ]
     lines.extend(f"- {item}" for item in news)
     return "\n".join(lines)
@@ -796,6 +796,7 @@ def _parse_seed(raw: str) -> int:
 def _new_state(seed: int) -> Dict[str, Any]:
     rng = RNG(seed)
     groups = _draw_groups(rng)
+    news_signal_config = _new_news_signal_config(rng)
     standings = {
         group: {
             team_id: {"played": 0, "pts": 0, "w": 0, "d": 0, "l": 0, "gf": 0, "ga": 0, "gd": 0}
@@ -820,6 +821,9 @@ def _new_state(seed: int) -> Dict[str, Any]:
         "current_matches": [],
         "all_matches": [],
         "round_news": [],
+        "round_news_signals": [],
+        "round_power_mods": {},
+        "news_signal_config": news_signal_config,
         "bets": [],
         "next_bet_id": 1,
         "next_match_id": 1,
@@ -840,6 +844,15 @@ def _new_state(seed: int) -> Dict[str, Any]:
     state["rng_state"] = rng.state
     _refresh_dynamic_titles(state)
     return state
+
+
+def _new_news_signal_config(rng: RNG) -> Dict[str, Any]:
+    return {
+        "truth_rate": 0.25,
+        "positive_delta": [2, 3],
+        "negative_delta": [-3, -2],
+        "salt": rng.randint(1, 2_147_483_647),
+    }
 
 
 def _draw_groups(rng: RNG) -> Dict[str, List[str]]:
@@ -1007,9 +1020,10 @@ def _make_odds(match: Dict[str, Any]) -> Dict[str, Any]:
     return {"wnl": wnl, "goals": goals, "pk": pk, "score_examples": examples}
 
 
-def _wnl_probs(home: str, away: str) -> Dict[str, float]:
-    home_power = TEAM_BY_ID[home]["power"]
-    away_power = TEAM_BY_ID[away]["power"]
+def _wnl_probs(home: str, away: str, power_mods: Optional[Dict[str, int]] = None) -> Dict[str, float]:
+    power_mods = power_mods or {}
+    home_power = TEAM_BY_ID[home]["power"] + int(power_mods.get("home", 0))
+    away_power = TEAM_BY_ID[away]["power"] + int(power_mods.get("away", 0))
     home_advantage = 3.5
     power_diff = home_power - away_power + home_advantage
     base_home = 1 / (1 + 10 ** (-power_diff / 20))
@@ -1024,9 +1038,10 @@ def _wnl_probs(home: str, away: str) -> Dict[str, float]:
     return {"home": mixed_home / total, "draw": draw / total, "away": mixed_away / total}
 
 
-def _expected_goals(home: str, away: str) -> Tuple[float, float]:
-    hp = TEAM_BY_ID[home]["power"]
-    ap = TEAM_BY_ID[away]["power"]
+def _expected_goals(home: str, away: str, power_mods: Optional[Dict[str, int]] = None) -> Tuple[float, float]:
+    power_mods = power_mods or {}
+    hp = TEAM_BY_ID[home]["power"] + int(power_mods.get("home", 0))
+    ap = TEAM_BY_ID[away]["power"] + int(power_mods.get("away", 0))
     diff = (hp - ap) / 10
     home_lambda = 1.05 + (hp - 75) / 100 + max(diff, 0) * 0.10 + 0.08
     away_lambda = 0.95 + (ap - 75) / 105 + max(-diff, 0) * 0.10
@@ -1048,20 +1063,32 @@ def _goals_keys() -> List[str]:
 
 
 def _goals_odds(match: Dict[str, Any], mode: str, line: int) -> float:
-    home_lambda, away_lambda = _expected_goals(match["home"], match["away"])
-    total_lambda = home_lambda + away_lambda
-    if mode == "over":
-        probability = 1 - sum(_poisson_pmf(i, total_lambda) for i in range(line + 1))
-    else:
-        probability = sum(_poisson_pmf(i, total_lambda) for i in range(line))
+    probability = _goals_probability(match, mode, line)
     key = f"{mode}{line}"
     fluct = match["fluct"]["goals"].get(key, 1.0)
     return _odds(probability, 0.88, 1.60, 3.00, fluct)
 
 
+def _goals_probability(match: Dict[str, Any], mode: str, line: int) -> float:
+    home_lambda, away_lambda = _expected_goals(match["home"], match["away"])
+    total_lambda = home_lambda + away_lambda
+    if mode == "over":
+        return 1 - sum(_poisson_pmf(i, total_lambda) for i in range(line + 1))
+    return sum(_poisson_pmf(i, total_lambda) for i in range(line))
+
+
+def _simulation_probs(match: Dict[str, Any]) -> Dict[str, float]:
+    return _wnl_probs(match["home"], match["away"], _match_power_mods(match))
+
+
+def _match_power_mods(match: Dict[str, Any]) -> Dict[str, int]:
+    mods = match.get("power_mods") or {}
+    return {"home": int(mods.get("home", 0)), "away": int(mods.get("away", 0))}
+
+
 def _simulate_match(match: Dict[str, Any], rng: RNG) -> Dict[str, Any]:
     roll = rng.random()
-    probs = match["probs"]
+    probs = _simulation_probs(match)
     if roll < probs["home"]:
         wnl = "home"
     elif roll < probs["home"] + probs["draw"]:
@@ -1119,7 +1146,7 @@ def _simulate_match(match: Dict[str, Any], rng: RNG) -> Dict[str, Any]:
 
 
 def _generate_score(match: Dict[str, Any], rng: RNG, wnl: str) -> Tuple[int, int]:
-    home_lambda, away_lambda = _expected_goals(match["home"], match["away"])
+    home_lambda, away_lambda = _expected_goals(match["home"], match["away"], _match_power_mods(match))
     home_goals = _poisson_sample(rng, home_lambda)
     away_goals = _poisson_sample(rng, away_lambda)
     if wnl == "draw":
@@ -1159,8 +1186,9 @@ def _tame_score(home_goals: int, away_goals: int, wnl: str) -> Tuple[int, int]:
 
 
 def _winner_by_power(match: Dict[str, Any], rng: RNG) -> str:
-    home_power = TEAM_BY_ID[match["home"]]["power"]
-    away_power = TEAM_BY_ID[match["away"]]["power"]
+    power_mods = _match_power_mods(match)
+    home_power = TEAM_BY_ID[match["home"]]["power"] + int(power_mods.get("home", 0))
+    away_power = TEAM_BY_ID[match["away"]]["power"] + int(power_mods.get("away", 0))
     probability = 1 / (1 + 10 ** (-(home_power - away_power) / 22))
     return "home" if rng.random() < probability else "away"
 
@@ -1407,11 +1435,15 @@ def _bet_touches_final_and_won(
 
 def _generate_news(state: Dict[str, Any], rng: RNG) -> List[str]:
     matches = state.get("current_matches", [])
+    state["round_news_signals"] = []
+    state["round_power_mods"] = {}
     if not matches:
         return []
     count = rng.randint(2, 3)
     items = []
     seen = set()
+    signals = []
+    power_mods: Dict[str, int] = {}
     categories = list(NEWS.keys())
     attempts = 0
     max_attempts = count * 8
@@ -1429,7 +1461,39 @@ def _generate_news(state: Dict[str, Any], rng: RNG) -> List[str]:
             continue
         seen.add(item)
         items.append(item)
+        signal = _news_signal(state, rng, category, team_id, item)
+        signals.append(signal)
+        if signal["true"]:
+            power_mods[team_id] = power_mods.get(team_id, 0) + signal["delta"]
+    state["round_news_signals"] = signals
+    state["round_power_mods"] = power_mods
+    _attach_round_power_mods(state)
     return items
+
+
+def _news_signal(state: Dict[str, Any], rng: RNG, category: str, team_id: str, text: str) -> Dict[str, Any]:
+    config = state.get("news_signal_config") or _new_news_signal_config(rng)
+    if "news_signal_config" not in state:
+        state["news_signal_config"] = config
+    is_true = category in {"positive", "negative"} and rng.random() < float(config.get("truth_rate", 0.25))
+    delta = 0
+    if is_true and category == "positive":
+        low, high = config.get("positive_delta", [2, 3])
+        delta = rng.randint(int(low), int(high))
+    elif is_true and category == "negative":
+        low, high = config.get("negative_delta", [-3, -2])
+        magnitude = rng.randint(abs(int(high)), abs(int(low)))
+        delta = -magnitude
+    return {"text": text, "category": category, "team_id": team_id, "true": is_true, "delta": delta}
+
+
+def _attach_round_power_mods(state: Dict[str, Any]) -> None:
+    mods = state.get("round_power_mods", {})
+    for match in state.get("current_matches", []):
+        match["power_mods"] = {
+            "home": int(mods.get(match["home"], 0)),
+            "away": int(mods.get(match["away"], 0)),
+        }
 
 
 def _format_groups(state: Dict[str, Any]) -> str:
