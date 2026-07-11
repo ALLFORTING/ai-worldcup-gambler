@@ -21,10 +21,11 @@
 - 支持胜平负、猜比分、总进球、点球大战、串关下注。
 - 基于真实概率生成赔率，并加入庄家抽水和每轮 ±5% 波动。
 - 自定义 mulberry32 PRNG，支持确定性随机：同 seed + 同操作 = 同结果。
-- 新闻/传闻系统：影响玩家认知，但不直接改变比赛结果。
+- 新闻/传闻系统：大多数是噪声，但 positive/negative 新闻中约 25% 是隐藏真信号，只影响真实模拟，不反映进展示赔率。
 - 高利贷系统：现金低于最低下注额后可借 50000，每轮 10% 复利。
 - 称号系统：动态资产称号和永久行为称号，结算时会提示新解锁称号。
-- 下注历史、完整统计摘要、盈亏追踪、胜率统计。
+- 下注历史、完整统计摘要、盈亏追踪、胜率统计和庄家累计抽水统计。
+- 查询命令支持 `--json`，方便 AI agent 读取结构化赛程、赔率和状态。
 - JSON 存档/读档，自动生成 `gambler_save.json`。
 - 纯标准库实现，不需要安装第三方依赖。
 
@@ -43,7 +44,9 @@ ai-worldcup-gambler/
 ├── tests/
 │   ├── smoke_test.py
 │   ├── full_run_test.py
-│   └── loan_test.py
+│   ├── loan_test.py
+│   ├── json_mode_test.py
+│   └── news_signal_test.py
 └── .github/
     └── workflows/
         └── smoke-test.yml
@@ -100,9 +103,11 @@ python examples/loan_demo.py
 python tests/smoke_test.py
 python tests/full_run_test.py
 python tests/loan_test.py
+python tests/json_mode_test.py
+python tests/news_signal_test.py
 ```
 
-GitHub Actions 会在 push 和 pull request 时自动运行 smoke test、full run test、loan test 和 demo。
+GitHub Actions 会在 push 和 pull request 时自动运行 smoke test、full run test、loan test、JSON mode test、news signal test 和 demo。
 
 ## Windows 编码说明
 
@@ -142,9 +147,21 @@ quit
 new_game 12345
 ```
 
+查询类命令支持尾部 `--json`，包括 `status`、`schedule`、`standings`、`news`、`history`、`summary`、`titles`。例如：
+
+```python
+import json
+import gambler
+
+schedule = json.loads(gambler.cmd("schedule --json"))
+print(schedule["matches"][0]["odds"]["wnl"])
+```
+
 ## 游戏规则
 
 玩家初始资金为 100000。单次下注最低 100，资金不足时不能下注。每轮比赛开始前可以查看赛程、赔率和新闻，然后下注。执行 `next` 后会模拟当前轮所有比赛，结算本轮下注，更新资金、债务、积分榜、淘汰赛晋级、称号和下注历史。
+
+新闻系统不是纯装饰：positive/negative 新闻中约 25% 会成为隐藏真信号，对提到球队产生当轮临时 power 修正。这个修正只影响真实比赛模拟，不会进入展示赔率；misleading 和 match_event 新闻永远是噪声。游戏不会提供查询真伪的命令，AI agent 只能靠跨轮统计自己推断。
 
 如果现金低于最低下注额 100，可以执行 `loan` 借高利贷。每次固定借款 50000，每轮 10% 复利。净资产或债务触及危险红线后游戏会强制结束。也可以执行 `quit` 直接结束游戏。
 
@@ -229,6 +246,21 @@ parlay 1,2,3 home,away,home 3000
 
 游戏会自动在项目目录生成 `gambler_save.json`。每次新开局、下注、推进轮次、借款、还款或退出都会写入存档。存档包含 PRNG 状态，因此读档后继续操作仍保持确定性。
 
+如果需要并行跑多局，可以让每个进程设置不同的 `GAMBLER_SAVE` 环境变量，指定完整存档路径：
+
+```bash
+GAMBLER_SAVE=/tmp/gambler-agent-1.json python examples/full_demo.py
+```
+
+Windows PowerShell 示例：
+
+```powershell
+$env:GAMBLER_SAVE="C:\temp\gambler-agent-1.json"
+python examples/full_demo.py
+```
+
+未设置 `GAMBLER_SAVE` 时，行为保持不变，仍使用 `gambler.py` 同目录的 `gambler_save.json`。
+
 `.gitignore` 已忽略 `gambler_save.json` 和 `*_output.txt`，不要把运行存档或 demo 输出提交到 GitHub。
 
 ## 示例输出
@@ -261,6 +293,17 @@ print(response)
 
 response = gambler.cmd("bet wnl 1 home 5000")
 print(response)
+```
+
+需要结构化读取时，可以在查询命令末尾加 `--json`：
+
+```python
+import json
+import gambler
+
+data = json.loads(gambler.cmd("schedule --json"))
+for match in data["matches"]:
+    print(match["index"], match["home"]["name"], match["away"]["name"], match["odds"]["wnl"])
 ```
 
 所有返回值都是字符串，适合 agent 读取、总结、决策和继续调用。`gambler_save.json` 会自动生成，agent 不需要手动创建。

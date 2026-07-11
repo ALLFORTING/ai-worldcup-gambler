@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -262,6 +264,13 @@ def cmd(command_string: str) -> str:
 
         return f"未知命令：{command}。试试：help"
     except Exception as exc:  # Keeps the pure text API friendly for agents.
+        if os.environ.get("GAMBLER_DEBUG") == "1":
+            return (
+                f"\u547d\u4ee4\u6267\u884c\u5931\u8d25\uff1a{exc}\n"
+                f"{traceback.format_exc()}"
+                "\u8fd9\u4e0d\u662f\u7384\u5b66\uff0c\u662f\u4ee3\u7801\u5728\u54b3\u55fd\u3002"
+                "\u8bf7\u68c0\u67e5\u547d\u4ee4\u683c\u5f0f\u3002"
+            )
         return f"命令执行失败：{exc}\n这不是玄学，是代码在咳嗽。请检查命令格式。"
 
 
@@ -400,7 +409,7 @@ def _cmd_standings(state: Dict[str, Any]) -> str:
 def _cmd_bet(state: Dict[str, Any], parts: List[str]) -> str:
     if state.get("ended"):
         return "游戏已经结束，不能再下注。庄家拒绝售后。"
-    if len(parts) < 5:
+    if len(parts) != 5:
         return "用法：bet <wnl/score/goals/pk> <match_index> <pick> <amount>"
     kind = parts[1].lower()
     match = _match_by_display_index(state, parts[2])
@@ -1842,7 +1851,7 @@ def _parse_goals_pick(raw: str) -> Optional[Tuple[str, int]]:
     if not match:
         return None
     line = int(match.group(2))
-    if line < 1 or line > 6:
+    if line < 1 or line > 12:
         return None
     return match.group(1), line
 
@@ -1901,13 +1910,21 @@ def _clamp(value: float, low: float, high: float) -> float:
 
 
 def _save_state(state: Dict[str, Any]) -> None:
-    SAVE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    save_file = _save_file()
+    save_file.parent.mkdir(parents=True, exist_ok=True)
+    save_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _load_state() -> Optional[Dict[str, Any]]:
-    if not SAVE_FILE.exists():
+    save_file = _save_file()
+    if not save_file.exists():
         return None
-    return json.loads(SAVE_FILE.read_text(encoding="utf-8"))
+    return json.loads(save_file.read_text(encoding="utf-8"))
+
+
+def _save_file() -> Path:
+    configured = os.environ.get("GAMBLER_SAVE")
+    return Path(configured).expanduser() if configured else SAVE_FILE
 
 
 if __name__ == "__main__":

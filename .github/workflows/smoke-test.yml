@@ -26,6 +26,12 @@ jobs:
       - name: Run loan test
         run: python tests/loan_test.py
 
+      - name: Run JSON mode test
+        run: python tests/json_mode_test.py
+
+      - name: Run news signal test
+        run: python tests/news_signal_test.py
+
       - name: Run short demo
         run: python examples/demo.py
 
