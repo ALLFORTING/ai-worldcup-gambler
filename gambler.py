@@ -21,6 +21,7 @@ STARTING_CASH = 100_000
 LOAN_AMOUNT = 50_000
 LOAN_RATE = 0.10
 DEBT_LIMIT = 500_000
+QUERY_COMMANDS = {"schedule", "status", "news", "history", "summary", "standings", "titles"}
 
 
 OPENING_TEXT = """⚽ 赌狗的自我修养 · AI 世界杯赌球模拟器
@@ -206,6 +207,9 @@ def cmd(command_string: str) -> str:
 
     parts = command_string.split()
     command = parts[0].lower()
+    json_mode = command in QUERY_COMMANDS and len(parts) > 1 and parts[-1] == "--json"
+    if json_mode:
+        parts = parts[:-1]
 
     try:
         if command == "help":
@@ -218,11 +222,11 @@ def cmd(command_string: str) -> str:
             return "还没开局。先输入：new_game 12345"
 
         if command == "status":
-            return _cmd_status(state)
+            return _json_response(_status_data(state)) if json_mode else _cmd_status(state)
         if command == "schedule":
-            return _cmd_schedule(state)
+            return _json_response(_schedule_data(state)) if json_mode else _cmd_schedule(state)
         if command == "standings":
-            return _cmd_standings(state)
+            return _json_response(_standings_data(state)) if json_mode else _cmd_standings(state)
         if command == "bet":
             text = _cmd_bet(state, parts)
             _save_state(state)
@@ -236,13 +240,13 @@ def cmd(command_string: str) -> str:
             _save_state(state)
             return text
         if command == "history":
-            return _cmd_history(state)
+            return _json_response(_history_data(state)) if json_mode else _cmd_history(state)
         if command == "summary":
-            return _cmd_summary(state)
+            return _json_response(_summary_data(state)) if json_mode else _cmd_summary(state)
         if command == "titles":
-            return _cmd_titles(state)
+            return _json_response(_titles_data(state)) if json_mode else _cmd_titles(state)
         if command == "news":
-            return _cmd_news(state)
+            return _json_response(_news_data(state)) if json_mode else _cmd_news(state)
         if command == "loan":
             text = _cmd_loan(state)
             _save_state(state)
@@ -678,6 +682,204 @@ def _cmd_news(state: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _json_response(data: Dict[str, Any]) -> str:
+    return json.dumps(data, ensure_ascii=False)
+
+
+def _status_data(state: Dict[str, Any]) -> Dict[str, Any]:
+    _refresh_dynamic_titles(state)
+    settled = [bet for bet in state["bets"] if bet["settled"]]
+    wins = sum(1 for bet in settled if bet["won"])
+    pending = sum(1 for bet in state["bets"] if not bet["settled"])
+    return {
+        "cash": state["cash"],
+        "debt": state["debt"],
+        "net_assets": _net_assets(state),
+        "round_index": state["round_index"],
+        "round_number": state["round_index"] + 1 if not state.get("ended") else None,
+        "total_rounds": 17,
+        "phase": state.get("phase"),
+        "stage": _round_name(state),
+        "dynamic_title": state.get("dynamic_title", "steady"),
+        "dynamic_title_name": TITLE_NAMES.get(state.get("dynamic_title", "steady")),
+        "permanent_titles": [
+            {"id": title, "name": TITLE_NAMES.get(title, title)}
+            for title in state.get("permanent_titles", [])
+        ],
+        "total_profit": state["total_profit"],
+        "win_rate": (wins / len(settled) * 100) if settled else 0.0,
+        "wins": wins,
+        "losses": len(settled) - wins,
+        "bets_total": len(state["bets"]),
+        "bets_settled": len(settled),
+        "bets_pending": pending,
+        "max_single_win": state["max_single_win"],
+        "max_single_loss": state["max_single_loss"],
+        "ended": bool(state.get("ended")),
+    }
+
+
+def _schedule_data(state: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "round_index": state["round_index"],
+        "round_number": state["round_index"] + 1 if not state.get("ended") else None,
+        "total_rounds": 17,
+        "phase": state.get("phase"),
+        "stage": _round_name(state),
+        "ended": bool(state.get("ended")),
+        "matches": [_match_public_data(match, index) for index, match in enumerate(state.get("current_matches", []), 1)],
+    }
+
+
+def _standings_data(state: Dict[str, Any]) -> Dict[str, Any]:
+    groups = {}
+    for group in GROUPS:
+        groups[group] = [
+            {
+                "team_id": team_id,
+                "team_name": _team_name(team_id),
+                **state["standings"][group][team_id],
+            }
+            for team_id in _sorted_group(state, group)
+        ]
+    return {
+        "round_index": state["round_index"],
+        "round_number": state["round_index"] + 1 if not state.get("ended") else None,
+        "phase": state.get("phase"),
+        "stage": _round_name(state),
+        "groups": groups,
+        "bracket": state.get("bracket", {}),
+        "played_matches": [_match_public_data(match, None) for match in state.get("all_matches", [])],
+        "current_matches": [_match_public_data(match, index) for index, match in enumerate(state.get("current_matches", []), 1)],
+    }
+
+
+def _news_data(state: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "round_index": state["round_index"],
+        "round_number": state["round_index"] + 1 if not state.get("ended") else None,
+        "stage": _round_name(state),
+        "items": list(state.get("round_news", [])),
+    }
+
+
+def _history_data(state: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "recent_limit": 20,
+        "bets": [_bet_public_data(bet) for bet in state["bets"][-20:]],
+    }
+
+
+def _summary_data(state: Dict[str, Any]) -> Dict[str, Any]:
+    settled = [bet for bet in state["bets"] if bet["settled"]]
+    wins = sum(1 for bet in settled if bet["won"])
+    total_staked = sum(bet["amount"] for bet in state["bets"])
+    total_returned = sum(bet.get("payout", 0) for bet in settled)
+    return {
+        "bets_total": len(state["bets"]),
+        "bets_settled": len(settled),
+        "wins": wins,
+        "losses": len(settled) - wins,
+        "win_rate": (wins / len(settled) * 100) if settled else 0.0,
+        "total_staked": total_staked,
+        "total_returned": total_returned,
+        "total_profit": state["total_profit"],
+        "max_single_win": state["max_single_win"],
+        "max_single_loss": state["max_single_loss"],
+        "cash": state["cash"],
+        "debt": state["debt"],
+        "net_assets": _net_assets(state),
+        "permanent_titles": [
+            {"id": title, "name": TITLE_NAMES.get(title, title)}
+            for title in state.get("permanent_titles", [])
+        ],
+    }
+
+
+def _titles_data(state: Dict[str, Any]) -> Dict[str, Any]:
+    _refresh_dynamic_titles(state)
+    return {
+        "dynamic": {"id": state.get("dynamic_title", "steady"), "name": TITLE_NAMES[state.get("dynamic_title", "steady")]},
+        "debt_titles": [
+            {"id": title, "name": TITLE_NAMES[title]}
+            for title in ["dog_end", "loan_vip"]
+            if (title == "dog_end" and state["debt"] > 0) or (title == "loan_vip" and state.get("loan_taken"))
+        ],
+        "permanent": [
+            {"id": title, "name": TITLE_NAMES[title], "taunt": TITLE_TAUNTS.get(title, "")}
+            for title in state.get("permanent_titles", [])
+        ],
+    }
+
+
+def _match_public_data(match: Dict[str, Any], index: Optional[int]) -> Dict[str, Any]:
+    data = {
+        "index": index,
+        "match_id": match["global_id"],
+        "round_index": match["round_index"],
+        "stage": match["stage"],
+        "stage_label": match["stage_label"],
+        "group": match.get("group"),
+        "home": _team_public_data(match["home"]),
+        "away": _team_public_data(match["away"]),
+        "odds": _odds_public_data(match.get("odds", {})),
+    }
+    if match.get("result"):
+        data["result"] = _result_public_data(match)
+    return data
+
+
+def _team_public_data(team_id: str) -> Dict[str, Any]:
+    team = TEAM_BY_ID[team_id]
+    return {"id": team_id, "name": team["name"], "power": team["power"], "tier": team["tier"]}
+
+
+def _odds_public_data(odds: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "wnl": {key: float(value) for key, value in odds.get("wnl", {}).items()},
+        "goals": {key: float(value) for key, value in odds.get("goals", {}).items()},
+        "pk": {key: float(value) for key, value in odds.get("pk", {}).items()},
+        "score_examples": {key: float(value) for key, value in odds.get("score_examples", {}).items()},
+    }
+
+
+def _result_public_data(match: Dict[str, Any]) -> Dict[str, Any]:
+    result = match["result"]
+    return {
+        "home_goals": result["home_goals"],
+        "away_goals": result["away_goals"],
+        "wnl": result["wnl"],
+        "went_extra": result["went_extra"],
+        "went_pk": result["went_pk"],
+        "extra_home": result["extra_home"],
+        "extra_away": result["extra_away"],
+        "pk_home": result["pk_home"],
+        "pk_away": result["pk_away"],
+        "winner": result["winner"],
+        "winner_team": result["winner_team"],
+        "loser_team": result["loser_team"],
+    }
+
+
+def _bet_public_data(bet: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": bet["id"],
+        "round_index": bet["round_index"],
+        "kind": bet["kind"],
+        "match_id": bet.get("match_id"),
+        "legs": bet.get("legs", []),
+        "pick": bet["pick"],
+        "amount": bet["amount"],
+        "odds": bet["odds"],
+        "description": bet["description"],
+        "settled": bet["settled"],
+        "won": bet["won"],
+        "profit": bet["profit"],
+        "payout": bet["payout"],
+        "stage": bet.get("stage"),
+    }
+
+
 def _cmd_loan(state: Dict[str, Any]) -> str:
     if state.get("ended"):
         return "游戏已经结束。高利贷也要讲基本流程。"
@@ -779,6 +981,8 @@ bet wnl 1 home 5000
 bet score 1 2-1 1000
 bet goals 1 over3 2000
 parlay 1,2 home,away 3000
+
+查询命令可加 --json：schedule --json / status --json / news --json / summary --json
 
 友情提示：新闻负责煽风点火，结果负责冷水浇头。"""
 
