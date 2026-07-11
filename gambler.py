@@ -417,6 +417,7 @@ def _cmd_bet(state: Dict[str, Any], parts: List[str]) -> str:
         if pick not in {"home", "draw", "away"}:
             return "胜平负 pick 必须是 home / draw / away。"
         odds = match["odds"]["wnl"][pick]
+        fair_odds = _fair_odds(match["probs"][pick])
         description = f"{_team_name(match['home'])} vs {_team_name(match['away'])} · {pick}"
     elif kind == "score":
         if not re.match(r"^\d{1,2}-\d{1,2}$", pick):
@@ -425,6 +426,7 @@ def _cmd_bet(state: Dict[str, Any], parts: List[str]) -> str:
         if home_goals > 9 or away_goals > 9:
             return "比分别太离谱，0-9 之间就够庄家笑了。"
         odds = _score_odds(match, home_goals, away_goals)
+        fair_odds = _fair_odds(_score_probability(match, home_goals, away_goals))
         description = f"{_team_name(match['home'])} vs {_team_name(match['away'])} · {pick}"
     elif kind == "goals":
         parsed = _parse_goals_pick(pick)
@@ -434,6 +436,8 @@ def _cmd_bet(state: Dict[str, Any], parts: List[str]) -> str:
         if odds is None:
             mode, line = parsed
             odds = _goals_odds(match, mode, line)
+        mode, line = parsed
+        fair_odds = _fair_odds(_goals_probability(match, mode, line))
         description = f"{_team_name(match['home'])} vs {_team_name(match['away'])} · {pick}"
     elif kind == "pk":
         if match["stage"] == "group":
@@ -441,11 +445,13 @@ def _cmd_bet(state: Dict[str, Any], parts: List[str]) -> str:
         if pick not in {"yes", "no"}:
             return "点球大战 pick 必须是 yes / no。"
         odds = match["odds"]["pk"][pick]
+        pk_prob_yes = match["probs"]["draw"] * 0.50
+        fair_odds = _fair_odds(pk_prob_yes if pick == "yes" else max(0.001, 1 - pk_prob_yes))
         description = f"{_team_name(match['home'])} vs {_team_name(match['away'])} · PK {pick}"
     else:
         return "未知玩法。支持：wnl / score / goals / pk"
 
-    return _place_bet(state, kind, amount, odds, description, match, pick)
+    return _place_bet(state, kind, amount, odds, fair_odds, description, match, pick)
 
 
 def _cmd_parlay(state: Dict[str, Any], parts: List[str]) -> str:
@@ -467,6 +473,7 @@ def _cmd_parlay(state: Dict[str, Any], parts: List[str]) -> str:
 
     legs = []
     odds = 1.0
+    fair_odds = 1.0
     descriptions = []
     seen = set()
     for raw_index, pick in zip(indexes, picks):
@@ -479,8 +486,10 @@ def _cmd_parlay(state: Dict[str, Any], parts: List[str]) -> str:
             return "串关 pick 只支持 home / draw / away。"
         seen.add(match["global_id"])
         leg_odds = match["odds"]["wnl"][pick]
+        leg_fair_odds = _fair_odds(match["probs"][pick])
         odds *= leg_odds
-        legs.append({"match_id": match["global_id"], "pick": pick, "odds": leg_odds})
+        fair_odds *= leg_fair_odds
+        legs.append({"match_id": match["global_id"], "pick": pick, "odds": leg_odds, "fair_odds": leg_fair_odds})
         descriptions.append(f"{_team_name(match['home'])}-{_team_name(match['away'])}:{pick}")
 
     odds *= 0.97 ** (len(legs) - 1)
@@ -496,6 +505,8 @@ def _cmd_parlay(state: Dict[str, Any], parts: List[str]) -> str:
         "pick": ",".join(picks),
         "amount": amount,
         "odds": odds,
+        "fair_odds": fair_odds,
+        "house_edge": _house_edge(amount, odds, fair_odds),
         "description": " / ".join(descriptions),
         "settled": False,
         "won": False,
@@ -639,6 +650,7 @@ def _cmd_summary(state: Dict[str, Any]) -> str:
             f"总投入：{total_staked:,}",
             f"总返还：{total_returned:,}",
             f"累计盈亏：{state['total_profit']:+,}",
+            _house_edge_line(state),
             f"最大单笔盈利：{state['max_single_win']:+,}",
             f"最大单笔亏损：{state['max_single_loss']:+,}",
             f"最终/当前现金：{state['cash']:,}",
@@ -715,6 +727,7 @@ def _status_data(state: Dict[str, Any]) -> Dict[str, Any]:
         "bets_pending": pending,
         "max_single_win": state["max_single_win"],
         "max_single_loss": state["max_single_loss"],
+        "house_edge_total": _house_edge_total(state),
         "ended": bool(state.get("ended")),
     }
 
@@ -789,6 +802,7 @@ def _summary_data(state: Dict[str, Any]) -> Dict[str, Any]:
         "cash": state["cash"],
         "debt": state["debt"],
         "net_assets": _net_assets(state),
+        "house_edge_total": _house_edge_total(state),
         "permanent_titles": [
             {"id": title, "name": TITLE_NAMES.get(title, title)}
             for title in state.get("permanent_titles", [])
@@ -871,6 +885,8 @@ def _bet_public_data(bet: Dict[str, Any]) -> Dict[str, Any]:
         "pick": bet["pick"],
         "amount": bet["amount"],
         "odds": bet["odds"],
+        "fair_odds": bet.get("fair_odds"),
+        "house_edge": bet.get("house_edge", 0),
         "description": bet["description"],
         "settled": bet["settled"],
         "won": bet["won"],
@@ -935,6 +951,7 @@ def _cmd_quit(state: Dict[str, Any]) -> str:
             f"最终债务：{state['debt']:,}",
             f"最终净资产：{_net_assets(state):,}",
             f"总盈亏：{state['total_profit']:+,}",
+            _house_edge_line(state),
             f"战绩：{wins}/{len(settled)}，胜率 {win_rate:.1f}%",
             "称号：" + ("、".join(titles) if titles else "暂无"),
             "免责声明：这只是虚拟模拟器。现实里别赌，现实里的庄家可不会给你 README。",
@@ -1569,6 +1586,7 @@ def _place_bet(
     kind: str,
     amount: int,
     odds: float,
+    fair_odds: float,
     description: str,
     match: Dict[str, Any],
     pick: str,
@@ -1584,6 +1602,8 @@ def _place_bet(
         "pick": pick,
         "amount": amount,
         "odds": odds,
+        "fair_odds": fair_odds,
+        "house_edge": _house_edge(amount, odds, fair_odds),
         "description": description,
         "settled": False,
         "won": False,
@@ -1829,6 +1849,25 @@ def _parse_goals_pick(raw: str) -> Optional[Tuple[str, int]]:
 
 def _net_assets(state: Dict[str, Any]) -> int:
     return int(state["cash"] - state["debt"])
+
+
+def _fair_odds(probability: float) -> float:
+    return 1 / max(0.001, probability)
+
+
+def _house_edge(amount: int, odds: float, fair_odds: float) -> float:
+    return round(max(0.0, amount * (1 - odds / max(0.001, fair_odds))), 2)
+
+
+def _house_edge_total(state: Dict[str, Any]) -> float:
+    return round(sum(float(bet.get("house_edge", 0)) for bet in state.get("bets", [])), 2)
+
+
+def _house_edge_line(state: Dict[str, Any]) -> str:
+    return (
+        f"\u5e84\u5bb6\u7d2f\u8ba1\u62bd\u6c34\uff1a{_house_edge_total(state):,.2f}"
+        "\uff08\u8fd9\u662f\u65e0\u8bba\u4f60\u8f93\u8d62\u90fd\u6ce8\u5b9a\u4ea4\u7684\u7a0e\uff09"
+    )
 
 
 def _team_name(team_id: Optional[str]) -> str:
