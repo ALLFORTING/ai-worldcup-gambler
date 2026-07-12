@@ -111,7 +111,7 @@ python tests/agent_signal_strategy_test.py
 
 `news_signal_test.py` 会用蒙特卡洛方式验证新闻真信号系统：固定 seed 下取带真信号的场次，重复模拟 2000 次，确认实际胜率显著高于展示赔率的归一化隐含概率；同时移除隐藏修正作为对照，偏移应随之消失。当前参数下，按展示赔率固定下注真信号方向的平均返还倍数约为 1.2124，净收益率约 +21.24%，说明真信号本身的优势足以覆盖抽水。
 
-这不等于任何 agent 都能自动赚钱；agent 还必须从可见新闻来源、文本方向和赛果里学出哪个来源可信。`agent_signal_strategy_test.py` 不读取隐藏 `true` 字段，只用可见新闻文本做局内统计；当前回测使用 18,252 个 seed，其中 8,811 个下注局簇、累计 20,002 注，朴素策略的投入加权返还倍数约为 1.0316，按局聚类标准误约 0.0096，均值减 2 倍标准误为 1.0124，因此按局聚类的 95% 置信下限仍大于 1。细节见 [`tests/news_signal_test.py`](tests/news_signal_test.py) 和 [`tests/agent_signal_strategy_test.py`](tests/agent_signal_strategy_test.py)。
+这不等于任何 agent 都能自动赚钱；agent 还必须从可见新闻来源、文本方向和赛果里学出哪个来源可信。`agent_signal_strategy_test.py` 不读取隐藏 `true` 字段，只使用可见新闻、展示赔率和赛果做局内统计；当前回测使用 18,252 个 seed，其中 8,811 个下注局簇、累计 20,002 注，朴素策略在每注等额投入下的平均返还倍数约为 1.0316，按局聚类标准误约 0.0096，均值减 2 倍标准误为 1.0124，因此按局聚类的近似双侧 95% 置信区间下限仍大于 1。细节见 [`tests/news_signal_test.py`](tests/news_signal_test.py) 和 [`tests/agent_signal_strategy_test.py`](tests/agent_signal_strategy_test.py)。
 
 GitHub Actions 会在 push 和 pull request 时自动运行 smoke test、full run test、loan test、JSON mode test、news signal test、agent signal strategy test 和 demo。
 
