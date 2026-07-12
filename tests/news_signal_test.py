@@ -95,12 +95,22 @@ def signal_strategy_return_rate(runs=SIGNAL_RETURN_RUNS):
 
 
 def fixed_seed_true_positive_match():
-    state = gambler._new_state(13)
-    true_positive = next(
-        signal
-        for signal in state["round_news_signals"]
-        if signal["category"] == "positive" and signal["true"] and signal["delta"] > 0
-    )
+    state = None
+    true_positive = None
+    for seed in SIGNAL_RETURN_SEEDS:
+        candidate = gambler._new_state(seed)
+        true_positive = next(
+            (
+                signal
+                for signal in candidate["round_news_signals"]
+                if signal["category"] == "positive" and signal["true"] and signal["delta"] > 0
+            ),
+            None,
+        )
+        if true_positive is not None:
+            state = candidate
+            break
+    assert state is not None and true_positive is not None
     match = next(
         match
         for match in state["current_matches"]
@@ -116,12 +126,18 @@ def main():
     state_one = gambler._new_state(24680)
     state_two = gambler._new_state(24680)
     assert state_one["news_signal_config"] == state_two["news_signal_config"]
+    config = state_one["news_signal_config"]
+    assert len(config["reliable_sources"]) == 1
+    assert set(config["source_reliability"]) == set(gambler.NEWS_SOURCES)
+    assert all(value in {0.0, 1.0} for value in config["source_reliability"].values())
     assert state_one["round_news_signals"] == state_two["round_news_signals"]
     assert state_one["round_power_mods"] == state_two["round_power_mods"]
 
     public_news = gambler._cmd_news(state_one)
     assert "round_news_signals" not in public_news
     assert "round_power_mods" not in public_news
+    assert "source_reliability" not in public_news
+    assert "reliable_sources" not in public_news
     assert "true" not in public_news.lower()
 
     true_positive_match, pick, signal = fixed_seed_true_positive_match()
