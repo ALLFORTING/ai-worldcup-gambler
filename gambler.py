@@ -143,6 +143,13 @@ NEWS = {
     ],
 }
 
+NEWS_SOURCES = [
+    "球场耳语",
+    "数据黑箱",
+    "更衣室电台",
+    "盘口观察站",
+]
+
 MOODS = {
     "big_win": [
         "🤑 赢麻了！你开始幻想靠虚拟赌球实现虚拟财务自由。",
@@ -1077,10 +1084,16 @@ def _new_state(seed: int) -> Dict[str, Any]:
 
 
 def _new_news_signal_config(rng: RNG) -> Dict[str, Any]:
+    sources = list(NEWS_SOURCES)
+    rng.shuffle(sources)
+    reliable_sources = sources[:1]
+    source_reliability = {source: (1.0 if source in reliable_sources else 0.0) for source in NEWS_SOURCES}
     return {
         "truth_rate": 0.25,
         "positive_delta": [5, 6],
         "negative_delta": [-6, -5],
+        "source_reliability": source_reliability,
+        "reliable_sources": reliable_sources,
         "salt": rng.randint(1, 2_147_483_647),
     }
 
@@ -1685,16 +1698,17 @@ def _generate_news(state: Dict[str, Any], rng: RNG) -> List[str]:
         match = rng.choice(matches)
         team_id = rng.choice([match["home"], match["away"]])
         category = rng.choice(categories)
+        source = rng.choice(NEWS_SOURCES)
         icon, template = rng.choice(NEWS[category])
         if category == "match_event":
-            item = f"{icon} {_team_name(match['home'])} vs {_team_name(match['away'])}：{template}"
+            item = f"{source}：{icon} {_team_name(match['home'])} vs {_team_name(match['away'])}：{template}"
         else:
-            item = f"{icon} " + template.format(team=_team_name(team_id))
+            item = f"{source}：{icon} " + template.format(team=_team_name(team_id))
         if item in seen:
             continue
         seen.add(item)
         items.append(item)
-        signal = _news_signal(state, rng, category, team_id, item)
+        signal = _news_signal(state, rng, category, team_id, item, source)
         signals.append(signal)
         if signal["true"]:
             power_mods[team_id] = power_mods.get(team_id, 0) + signal["delta"]
@@ -1704,11 +1718,18 @@ def _generate_news(state: Dict[str, Any], rng: RNG) -> List[str]:
     return items
 
 
-def _news_signal(state: Dict[str, Any], rng: RNG, category: str, team_id: str, text: str) -> Dict[str, Any]:
+def _news_signal(
+    state: Dict[str, Any], rng: RNG, category: str, team_id: str, text: str, source: str
+) -> Dict[str, Any]:
     config = state.get("news_signal_config") or _new_news_signal_config(rng)
     if "news_signal_config" not in state:
         state["news_signal_config"] = config
-    is_true = category in {"positive", "negative"} and rng.random() < float(config.get("truth_rate", 0.25))
+    source_reliability = config.get("source_reliability") or {}
+    if source_reliability:
+        truth_probability = float(source_reliability.get(source, 0.0))
+    else:
+        truth_probability = float(config.get("truth_rate", 0.25))
+    is_true = category in {"positive", "negative"} and rng.random() < truth_probability
     delta = 0
     if is_true and category == "positive":
         low, high = config.get("positive_delta", [2, 3])
@@ -1717,7 +1738,7 @@ def _news_signal(state: Dict[str, Any], rng: RNG, category: str, team_id: str, t
         low, high = config.get("negative_delta", [-3, -2])
         magnitude = rng.randint(abs(int(high)), abs(int(low)))
         delta = -magnitude
-    return {"text": text, "category": category, "team_id": team_id, "true": is_true, "delta": delta}
+    return {"text": text, "source": source, "category": category, "team_id": team_id, "true": is_true, "delta": delta}
 
 
 def _attach_round_power_mods(state: Dict[str, Any]) -> None:
