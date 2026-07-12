@@ -107,6 +107,8 @@ python tests/json_mode_test.py
 python tests/news_signal_test.py
 ```
 
+`news_signal_test.py` 会用蒙特卡洛方式验证新闻真信号系统：固定 seed 下取带真信号的场次，重复模拟 2000 次，确认实际胜率显著高于展示赔率的归一化隐含概率；同时移除隐藏修正作为对照，偏移应随之消失。含义很简单：真信号确实只进入比赛模拟、不进入赔率展示，会读新闻的 agent 存在可获得的信息优势；细节见 [`tests/news_signal_test.py`](tests/news_signal_test.py)。
+
 GitHub Actions 会在 push 和 pull request 时自动运行 smoke test、full run test、loan test、JSON mode test、news signal test 和 demo。
 
 ## Windows 编码说明
