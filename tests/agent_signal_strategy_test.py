@@ -70,10 +70,11 @@ def visible_round_recommendations(state):
     return recommendations
 
 
-def strategy_returns_for_seed(seed):
+def strategy_result_for_seed(seed):
     state = gambler._new_state(seed)
     source_stats = {source: {"hits": 0, "trials": 0} for source in gambler.NEWS_SOURCES}
-    returns = []
+    total_staked = 0
+    total_returned = 0.0
 
     while not state.get("ended"):
         recommendations = visible_round_recommendations(state)
@@ -105,36 +106,51 @@ def strategy_returns_for_seed(seed):
             match = results.get(match_id)
             if not match:
                 continue
-            returns.append(odds if match["result"]["wnl"] == pick else 0.0)
+            total_staked += 1
+            if match["result"]["wnl"] == pick:
+                total_returned += odds
 
-    return returns
+    return {"seed": seed, "staked": total_staked, "returned": total_returned}
 
 
-def mean_and_standard_error(values):
-    sample_size = len(values)
-    mean = sum(values) / sample_size
-    variance = sum((value - mean) ** 2 for value in values) / (sample_size - 1)
-    return mean, math.sqrt(variance / sample_size)
+def weighted_cluster_mean_and_standard_error(clusters):
+    total_staked = sum(cluster["staked"] for cluster in clusters)
+    total_returned = sum(cluster["returned"] for cluster in clusters)
+    cluster_count = len(clusters)
+    mean = total_returned / total_staked
+    residual_sum = sum(
+        (cluster["returned"] - mean * cluster["staked"]) ** 2 for cluster in clusters
+    )
+    standard_error = math.sqrt(
+        (cluster_count / (cluster_count - 1)) * residual_sum / (total_staked ** 2)
+    )
+    return mean, standard_error
 
 
 def main():
-    values = []
+    clusters = []
+    total_staked = 0
     seeds_used = 0
     for seed in range(1, MAX_SEEDS + 1):
-        values.extend(strategy_returns_for_seed(seed))
+        result = strategy_result_for_seed(seed)
+        if result["staked"] > 0:
+            clusters.append(result)
+            total_staked += result["staked"]
         seeds_used = seed
-        if len(values) >= MIN_TOTAL_BETS:
+        if total_staked >= MIN_TOTAL_BETS:
             break
 
-    assert len(values) >= MIN_TOTAL_BETS, f"only collected {len(values)} bets"
-    return_multiple, standard_error = mean_and_standard_error(values)
+    assert total_staked >= MIN_TOTAL_BETS, f"only collected {total_staked} bets"
+    assert len(clusters) > 1, "cluster standard error needs at least two betting seeds"
+    return_multiple, standard_error = weighted_cluster_mean_and_standard_error(clusters)
     lower_bound = return_multiple - 2 * standard_error
-    assert lower_bound > 1.0, (return_multiple, standard_error, lower_bound, len(values))
+    assert lower_bound > 1.0, (return_multiple, standard_error, lower_bound, len(clusters), total_staked)
 
     print(f"Seeds used: {seeds_used}")
-    print(f"Total strategy bets: {len(values)}")
-    print(f"Honest agent strategy average return multiple: {return_multiple:.4f}")
-    print(f"Standard error: {standard_error:.4f}")
+    print(f"Betting seed clusters: {len(clusters)}")
+    print(f"Total strategy bets: {total_staked}")
+    print(f"Honest agent strategy weighted return multiple: {return_multiple:.4f}")
+    print(f"Cluster standard error: {standard_error:.4f}")
     print(f"Mean minus 2 standard errors: {lower_bound:.4f}")
     print("Agent signal strategy test passed.")
 
