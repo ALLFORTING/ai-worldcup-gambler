@@ -21,7 +21,7 @@
 - 支持胜平负、猜比分、总进球、点球大战、串关下注。
 - 基于真实概率生成赔率，并加入庄家抽水和每轮 ±5% 波动。
 - 自定义 mulberry32 PRNG，支持确定性随机：同 seed + 同操作 = 同结果。
-- 新闻/传闻系统：大多数是噪声，但 positive/negative 新闻中约 25% 是隐藏真信号，只影响真实模拟，不反映进展示赔率。
+- 新闻/传闻系统：大多数是噪声，但 positive/negative 新闻中约 25% 是隐藏真信号，会给相关球队施加当轮 ±5~6 power 修正；修正只影响真实模拟，不反映进展示赔率。
 - 高利贷系统：现金低于最低下注额后可借 50000，每轮 10% 复利。
 - 称号系统：动态资产称号和永久行为称号，结算时会提示新解锁称号。
 - 下注历史、完整统计摘要、盈亏追踪、胜率统计和庄家累计抽水统计。
@@ -163,7 +163,7 @@ print(schedule["matches"][0]["odds"]["wnl"])
 
 玩家初始资金为 100000。单次下注最低 100，资金不足时不能下注。每轮比赛开始前可以查看赛程、赔率和新闻，然后下注。执行 `next` 后会模拟当前轮所有比赛，结算本轮下注，更新资金、债务、积分榜、淘汰赛晋级、称号和下注历史。
 
-新闻系统不是纯装饰：positive/negative 新闻中约 25% 会成为隐藏真信号，对提到球队产生当轮临时 power 修正。这个修正只影响真实比赛模拟，不会进入展示赔率；misleading 和 match_event 新闻永远是噪声。游戏不会提供查询真伪的命令，AI agent 只能靠跨轮统计自己推断。
+新闻系统不是纯装饰：positive/negative 新闻中约 25% 会成为隐藏真信号，对提到球队产生当轮 ±5~6 power 临时修正。这个修正只影响真实比赛模拟，不会进入展示赔率；misleading 和 match_event 新闻永远是噪声。游戏不会提供查询真伪的命令，AI agent 只能靠跨轮统计自己推断。
 
 如果现金低于最低下注额 100，可以执行 `loan` 借高利贷。每次固定借款 50000，每轮 10% 复利。净资产或债务触及危险红线后游戏会强制结束。也可以执行 `quit` 直接结束游戏。
 
@@ -244,6 +244,8 @@ parlay 1,2,3 home,away,home 3000
 
 所有场次都猜中才赢。赔率为各项赔率相乘，并加入累积抽水。
 
+赔率有明确边界：胜平负约 1.20–8.00，比分 5.00–50.00，总进球 1.60–3.00，点球 yes 2.50–4.00、no 1.08–1.60。极端盘口也会被截断，例如 `over9` 不会生成离谱赔率。
+
 ## 存档机制
 
 游戏会自动在项目目录生成 `gambler_save.json`。每次新开局、下注、推进轮次、借款、还款或退出都会写入存档。存档包含 PRNG 状态，因此读档后继续操作仍保持确定性。
@@ -307,6 +309,31 @@ data = json.loads(gambler.cmd("schedule --json"))
 for match in data["matches"]:
     print(match["index"], match["home"]["name"], match["away"]["name"], match["odds"]["wnl"])
 ```
+
+## Agent 接入示例
+
+一个 agent 可以用 JSON 模式读取状态和赛程，用纯文本新闻作为额外观察，再把决策写回命令：
+
+```python
+import json, gambler
+
+print(gambler.cmd("new_game 20260703"))
+for _ in range(json.loads(gambler.cmd("status --json"))["total_rounds"]):
+    status = json.loads(gambler.cmd("status --json"))
+    if status["ended"]:
+        break
+    schedule = json.loads(gambler.cmd("schedule --json"))
+    news_text = gambler.cmd("news")
+    for match in schedule["matches"]:
+        pick = min(match["odds"]["wnl"], key=match["odds"]["wnl"].get)
+        amount = 1000 if status["cash"] >= 1000 else 100
+        if status["cash"] >= amount:
+            gambler.cmd(f"bet wnl {match['index']} {pick} {amount}")
+    print(gambler.cmd("next"))
+print(gambler.cmd("summary"))
+```
+
+`--json` 只用于查询命令，便于 agent 稳定解析 `cash`、`matches`、`odds`、`history` 和 `summary`。新闻里存在隐藏真信号，但游戏不会暴露真伪标签；想获得信息优势，agent 需要长期记录新闻文本、球队、赔率和赛果，自己做统计归因。
 
 所有返回值都是字符串，适合 agent 读取、总结、决策和继续调用。`gambler_save.json` 会自动生成，agent 不需要手动创建。
 
