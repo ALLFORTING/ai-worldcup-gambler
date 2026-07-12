@@ -17,6 +17,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import gambler
 
 
+SIGNAL_RETURN_SEEDS = tuple(range(1, 501))
+SIGNAL_RETURN_SAMPLE_SIZE = 32
+SIGNAL_RETURN_RUNS = 2000
+
+
 def assert_good(command, output):
     assert isinstance(output, str), f"{command!r} did not return a string"
     assert output.strip(), f"{command!r} returned empty output"
@@ -45,6 +50,48 @@ def displayed_odds_return_rate(match, pick, runs=2000):
         if result["wnl"] == pick:
             total_return += match["odds"]["wnl"][pick]
     return total_return / runs
+
+
+def directional_signal_bets(max_samples=SIGNAL_RETURN_SAMPLE_SIZE):
+    bets = []
+    for seed in SIGNAL_RETURN_SEEDS:
+        state = gambler._new_state(seed)
+        for signal in state["round_news_signals"]:
+            if not signal["true"] or not signal["team_id"] or signal["delta"] == 0:
+                continue
+            match = next(
+                (
+                    match
+                    for match in state["current_matches"]
+                    if signal["team_id"] in {match["home"], match["away"]}
+                ),
+                None,
+            )
+            if match is None:
+                continue
+            team_side = "home" if match["home"] == signal["team_id"] else "away"
+            pick = team_side if signal["delta"] > 0 else ("away" if team_side == "home" else "home")
+            bets.append((match, pick))
+            if len(bets) >= max_samples:
+                return bets
+    return bets
+
+
+def signal_strategy_return_rate(runs=SIGNAL_RETURN_RUNS):
+    bets = directional_signal_bets()
+    assert len(bets) == SIGNAL_RETURN_SAMPLE_SIZE, len(bets)
+
+    total_return = 0.0
+    total_stake = 0
+    for bet_index, (match, pick) in enumerate(bets):
+        odds = match["odds"]["wnl"][pick]
+        for run_index in range(runs):
+            rng = gambler.RNG(10_000_000 + bet_index * 100_000 + run_index)
+            result = gambler._simulate_match(match, rng)
+            if result["wnl"] == pick:
+                total_return += odds
+            total_stake += 1
+    return total_return / total_stake
 
 
 def fixed_seed_true_positive_match():
@@ -84,15 +131,15 @@ def main():
     implied_probability = normalized_implied_probability(true_positive_match, pick)
     noise_rate = wnl_rate(noise_match, pick)
     signal_rate = wnl_rate(true_positive_match, pick)
-    return_rate = displayed_odds_return_rate(true_positive_match, pick)
+    return_rate = signal_strategy_return_rate()
 
     assert signal["category"] == "positive" and signal["true"]
     assert signal_rate > implied_probability + 0.02, (signal_rate, implied_probability)
     assert signal_rate > noise_rate + 0.02, (signal_rate, noise_rate)
     assert abs(noise_rate - implied_probability) < 0.06, (noise_rate, implied_probability)
-    assert return_rate < 1, return_rate
+    assert return_rate > 1, return_rate
 
-    print(f"Signal bet average return rate: {return_rate:.4f}")
+    print(f"Signal strategy average return rate: {return_rate:.4f}")
     print("News signal test passed.")
 
 

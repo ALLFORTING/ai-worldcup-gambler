@@ -1079,8 +1079,8 @@ def _new_state(seed: int) -> Dict[str, Any]:
 def _new_news_signal_config(rng: RNG) -> Dict[str, Any]:
     return {
         "truth_rate": 0.25,
-        "positive_delta": [2, 3],
-        "negative_delta": [-3, -2],
+        "positive_delta": [5, 6],
+        "negative_delta": [-6, -5],
         "salt": rng.randint(1, 2_147_483_647),
     }
 
