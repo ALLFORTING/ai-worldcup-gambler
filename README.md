@@ -21,7 +21,7 @@
 - 支持胜平负、猜比分、总进球、点球大战、串关下注。
 - 基于真实概率生成赔率，并加入庄家抽水和每轮 ±5% 波动。
 - 自定义 mulberry32 PRNG，支持确定性随机：同 seed + 同操作 = 同结果。
-- 新闻/传闻系统：每局 4 个可见新闻来源中隐藏 1 个可靠源；它的 positive/negative 新闻会成为真信号，其余来源为噪声，总体真信号率约 25%。
+- 新闻/传闻系统：每局 4 个可见新闻来源中隐藏 1 个可靠源；在 positive/negative 新闻中，来自可靠源的约占 25% 并构成真信号；其余来源及 misleading、match_event 新闻均为噪声，真信号占全部新闻口径约 12.5%。
 - 高利贷系统：现金低于最低下注额后可借 50000，每轮 10% 复利。
 - 称号系统：动态资产称号和永久行为称号，结算时会提示新解锁称号。
 - 下注历史、完整统计摘要、盈亏追踪、胜率统计和庄家累计抽水统计。
@@ -111,7 +111,7 @@ python tests/agent_signal_strategy_test.py
 
 `news_signal_test.py` 会用蒙特卡洛方式验证新闻真信号系统：固定 seed 下取带真信号的场次，重复模拟 2000 次，确认实际胜率显著高于展示赔率的归一化隐含概率；同时移除隐藏修正作为对照，偏移应随之消失。当前参数下，按展示赔率固定下注真信号方向的平均返还倍数约为 1.2124，净收益率约 +21.24%，说明真信号本身的优势足以覆盖抽水。
 
-这不等于任何 agent 都能自动赚钱；agent 还必须从可见新闻来源、文本方向和赛果里学出哪个来源可信。`agent_signal_strategy_test.py` 不读取隐藏 `true` 字段，只用可见新闻文本做局内统计，累计 20,002 注的朴素策略平均返还倍数约为 1.0316，标准误约 0.0094，均值减 2 倍标准误为 1.0127，因此在 95% 置信口径下仍为正期望。细节见 [`tests/news_signal_test.py`](tests/news_signal_test.py) 和 [`tests/agent_signal_strategy_test.py`](tests/agent_signal_strategy_test.py)。
+这不等于任何 agent 都能自动赚钱；agent 还必须从可见新闻来源、文本方向和赛果里学出哪个来源可信。`agent_signal_strategy_test.py` 不读取隐藏 `true` 字段，只用可见新闻文本做局内统计；当前回测使用 18,252 个 seed，其中 8,811 个下注局簇、累计 20,002 注，朴素策略的投入加权返还倍数约为 1.0316，按局聚类标准误约 0.0096，均值减 2 倍标准误为 1.0124，因此按局聚类的 95% 置信下限仍大于 1。细节见 [`tests/news_signal_test.py`](tests/news_signal_test.py) 和 [`tests/agent_signal_strategy_test.py`](tests/agent_signal_strategy_test.py)。
 
 GitHub Actions 会在 push 和 pull request 时自动运行 smoke test、full run test、loan test、JSON mode test、news signal test、agent signal strategy test 和 demo。
 
@@ -167,7 +167,7 @@ print(schedule["matches"][0]["odds"]["wnl"])
 
 玩家初始资金为 100000。单次下注最低 100，资金不足时不能下注。每轮比赛开始前可以查看赛程、赔率和新闻，然后下注。执行 `next` 后会模拟当前轮所有比赛，结算本轮下注，更新资金、债务、积分榜、淘汰赛晋级、称号和下注历史。
 
-新闻系统不是纯装饰：每局会把 4 个可见新闻来源中的 1 个设为隐藏可靠源。可靠源的 positive/negative 新闻会成为真信号，对提到球队产生当轮 ±10~12 power 临时修正；其余来源的新闻是噪声，misleading 和 match_event 新闻也永远是噪声。这个修正只影响真实比赛模拟，不会进入展示赔率。游戏不会提供查询真伪或可靠源的命令，AI agent 只能靠跨轮统计自己推断。
+新闻系统不是纯装饰：每局会把 4 个可见新闻来源中的 1 个设为隐藏可靠源。在 positive/negative 新闻中，来自可靠源的约占 25% 并构成真信号，会对提到球队产生当轮 ±10~12 power 临时修正；其余来源及 misleading、match_event 新闻均为噪声，真信号占全部新闻口径约 12.5%。这个修正只影响真实比赛模拟，不会进入展示赔率。游戏不会提供查询真伪或可靠源的命令，AI agent 只能靠跨轮统计自己推断。
 
 如果现金低于最低下注额 100，可以执行 `loan` 借高利贷。每次固定借款 50000，每轮 10% 复利。净资产或债务触及危险红线后游戏会强制结束。也可以执行 `quit` 直接结束游戏。
 
@@ -314,7 +314,7 @@ for match in data["matches"]:
     print(match["index"], match["home"]["name"], match["away"]["name"], match["odds"]["wnl"])
 ```
 
-## Agent 接入示例
+## 最小 Agent 接入示例
 
 一个 agent 可以用 JSON 模式读取状态和赛程，用纯文本新闻作为额外观察，再把决策写回命令：
 
@@ -328,8 +328,10 @@ for _ in range(json.loads(gambler.cmd("status --json"))["total_rounds"]):
         break
     schedule = json.loads(gambler.cmd("schedule --json"))
     news_text = gambler.cmd("news")
+    # 实际 agent 可在此结合历史赛果分析新闻来源，本示例只演示接口调用。
     for match in schedule["matches"]:
         pick = min(match["odds"]["wnl"], key=match["odds"]["wnl"].get)
+        status = json.loads(gambler.cmd("status --json"))
         amount = 1000 if status["cash"] >= 1000 else 100
         if status["cash"] >= amount:
             gambler.cmd(f"bet wnl {match['index']} {pick} {amount}")
