@@ -155,7 +155,7 @@ def main():
     assert abs(noise_rate - implied_probability) < 0.06, (noise_rate, implied_probability)
     assert return_rate > 1, return_rate
 
-    print(f"Signal strategy average return rate: {return_rate:.4f}")
+    print(f"Signal strategy average return multiple: {return_rate:.4f}")
     print("News signal test passed.")
 
 

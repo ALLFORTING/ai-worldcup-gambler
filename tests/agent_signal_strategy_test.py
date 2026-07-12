@@ -1,3 +1,4 @@
+import math
 import sys
 from pathlib import Path
 
@@ -16,7 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import gambler
 
 
-RUNS = 2000
+MAX_SEEDS = 25000
+MIN_TOTAL_BETS = 20000
 OBSERVE_ROUNDS = 3
 MIN_SOURCE_TRIALS = 2
 RELIABLE_SOURCE_THRESHOLD = 0.8
@@ -68,11 +70,10 @@ def visible_round_recommendations(state):
     return recommendations
 
 
-def strategy_return_for_seed(seed):
+def strategy_returns_for_seed(seed):
     state = gambler._new_state(seed)
     source_stats = {source: {"hits": 0, "trials": 0} for source in gambler.NEWS_SOURCES}
-    total_return = 0.0
-    total_staked = 0
+    returns = []
 
     while not state.get("ended"):
         recommendations = visible_round_recommendations(state)
@@ -104,27 +105,37 @@ def strategy_return_for_seed(seed):
             match = results.get(match_id)
             if not match:
                 continue
-            total_staked += 1
-            if match["result"]["wnl"] == pick:
-                total_return += odds
+            returns.append(odds if match["result"]["wnl"] == pick else 0.0)
 
-    return total_return, total_staked
+    return returns
+
+
+def mean_and_standard_error(values):
+    sample_size = len(values)
+    mean = sum(values) / sample_size
+    variance = sum((value - mean) ** 2 for value in values) / (sample_size - 1)
+    return mean, math.sqrt(variance / sample_size)
 
 
 def main():
-    total_return = 0.0
-    total_staked = 0
-    for seed in range(1, RUNS + 1):
-        returned, staked = strategy_return_for_seed(seed)
-        total_return += returned
-        total_staked += staked
+    values = []
+    seeds_used = 0
+    for seed in range(1, MAX_SEEDS + 1):
+        values.extend(strategy_returns_for_seed(seed))
+        seeds_used = seed
+        if len(values) >= MIN_TOTAL_BETS:
+            break
 
-    assert total_staked > 0, "strategy did not place any bets"
-    return_multiple = total_return / total_staked
-    assert return_multiple > 1.0, return_multiple
+    assert len(values) >= MIN_TOTAL_BETS, f"only collected {len(values)} bets"
+    return_multiple, standard_error = mean_and_standard_error(values)
+    lower_bound = return_multiple - 2 * standard_error
+    assert lower_bound > 1.0, (return_multiple, standard_error, lower_bound, len(values))
 
+    print(f"Seeds used: {seeds_used}")
+    print(f"Total strategy bets: {len(values)}")
     print(f"Honest agent strategy average return multiple: {return_multiple:.4f}")
-    print(f"Total strategy bets: {total_staked}")
+    print(f"Standard error: {standard_error:.4f}")
+    print(f"Mean minus 2 standard errors: {lower_bound:.4f}")
     print("Agent signal strategy test passed.")
 
 
