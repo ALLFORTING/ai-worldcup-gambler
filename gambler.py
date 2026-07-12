@@ -1090,8 +1090,8 @@ def _new_news_signal_config(rng: RNG) -> Dict[str, Any]:
     source_reliability = {source: (1.0 if source in reliable_sources else 0.0) for source in NEWS_SOURCES}
     return {
         "truth_rate": 0.25,
-        "positive_delta": [5, 6],
-        "negative_delta": [-6, -5],
+        "positive_delta": [10, 12],
+        "negative_delta": [-12, -10],
         "source_reliability": source_reliability,
         "reliable_sources": reliable_sources,
         "salt": rng.randint(1, 2_147_483_647),
