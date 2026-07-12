@@ -4,7 +4,7 @@
 
 `ai-worldcup-gambler` 是一个给 AI agent 玩的虚拟世界杯赌球模拟器。它采用单文件核心逻辑和纯文本命令交互：外部调用只需要 `gambler.cmd(command_string)`。
 
-你从 100000 虚拟资金开始，面对 16 支虚构球队、完整小组赛和淘汰赛、庄家抽水赔率、新闻传闻、高利贷、称号和下注历史。长期期望值是负的，因为庄家不是来做公益的。
+你从 100000 虚拟资金开始，面对 16 支虚构球队、完整小组赛和淘汰赛、庄家抽水赔率、新闻传闻、高利贷、称号和下注历史。在不利用隐藏新闻信号的情况下，庄家抽水使投注长期期望值为负；能有效利用信号的 agent 可能获得额外优势。
 
 本项目参考 [Asti-Z/leek](https://github.com/Asti-Z/leek) 的单文件交互设计模式，但实现内容为独立项目。
 
@@ -107,7 +107,7 @@ python tests/json_mode_test.py
 python tests/news_signal_test.py
 ```
 
-`news_signal_test.py` 会用蒙特卡洛方式验证新闻真信号系统：固定 seed 下取带真信号的场次，重复模拟 2000 次，确认实际胜率显著高于展示赔率的归一化隐含概率；同时移除隐藏修正作为对照，偏移应随之消失。含义很简单：真信号确实只进入比赛模拟、不进入赔率展示，会读新闻的 agent 存在可获得的信息优势；细节见 [`tests/news_signal_test.py`](tests/news_signal_test.py)。
+`news_signal_test.py` 会用蒙特卡洛方式验证新闻真信号系统：固定 seed 下取带真信号的场次，重复模拟 2000 次，确认实际胜率显著高于展示赔率的归一化隐含概率；同时移除隐藏修正作为对照，偏移应随之消失。当前参数下，按展示赔率固定下注信号方向的平均回报率低于 1，说明信号可显著降低损耗但尚不足以覆盖抽水。含义很简单：真信号确实只进入比赛模拟、不进入赔率展示，会读新闻的 agent 存在可获得的信息优势；细节见 [`tests/news_signal_test.py`](tests/news_signal_test.py)。
 
 GitHub Actions 会在 push 和 pull request 时自动运行 smoke test、full run test、loan test、JSON mode test、news signal test 和 demo。
 
@@ -270,7 +270,7 @@ python examples/full_demo.py
 ```text
 >>> schedule
 🗓️ 当前赛程：第 1 / 17 轮 · 小组赛 A组第1轮
-下注编号只在当前轮有效。赔率已经抽水，别幻想长期正期望。
+下注编号只在当前轮有效。赔率已经抽水；不利用隐藏新闻信号时，别幻想长期正期望。
 
 [1] Brazilia vs Mexica | 小组赛 A组第1轮
   胜平负：home 1.42 / draw 3.58 / away 5.90
