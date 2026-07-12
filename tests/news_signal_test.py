@@ -38,6 +38,15 @@ def wnl_rate(match, pick, runs=2000):
     return wins / runs
 
 
+def displayed_odds_return_rate(match, pick, runs=2000):
+    total_return = 0.0
+    for index in range(runs):
+        result = gambler._simulate_match(copy.deepcopy(match), gambler.RNG(index + 1000))
+        if result["wnl"] == pick:
+            total_return += match["odds"]["wnl"][pick]
+    return total_return / runs
+
+
 def fixed_seed_true_positive_match():
     state = gambler._new_state(13)
     true_positive = next(
@@ -75,12 +84,15 @@ def main():
     implied_probability = normalized_implied_probability(true_positive_match, pick)
     noise_rate = wnl_rate(noise_match, pick)
     signal_rate = wnl_rate(true_positive_match, pick)
+    return_rate = displayed_odds_return_rate(true_positive_match, pick)
 
     assert signal["category"] == "positive" and signal["true"]
     assert signal_rate > implied_probability + 0.02, (signal_rate, implied_probability)
     assert signal_rate > noise_rate + 0.02, (signal_rate, noise_rate)
     assert abs(noise_rate - implied_probability) < 0.06, (noise_rate, implied_probability)
+    assert return_rate < 1, return_rate
 
+    print(f"Signal bet average return rate: {return_rate:.4f}")
     print("News signal test passed.")
 
 
